@@ -112,7 +112,7 @@ const TOOLS = [
  * Creates a stdio-based MCP server script content.
  * This is written to a temp file and spawned as a subprocess by Claude.
  */
-export function createOrchestratorScript(httpPort: number): string {
+export function createOrchestratorScript(httpPort: number, secret: string): string {
   // The MCP server connects to our HTTP bridge to execute callbacks
   return `#!/usr/bin/env node
 'use strict';
@@ -121,6 +121,7 @@ const http = require('http');
 const readline = require('readline');
 
 const BRIDGE_PORT = ${httpPort};
+const BRIDGE_SECRET = '${secret}';
 
 function callBridge(method, params) {
   return new Promise((resolve, reject) => {
@@ -128,7 +129,7 @@ function callBridge(method, params) {
     const req = http.request({
       hostname: '127.0.0.1',
       port: BRIDGE_PORT,
-      path: '/rpc',
+      path: '/rpc/' + BRIDGE_SECRET,
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
     }, (res) => {
@@ -203,15 +204,21 @@ function respondError(id, code, message) {
 export class OrchestratorBridge {
   private server: ReturnType<typeof createServer> | null = null
   private port: number = 0
+  private secret: string = ''
   private callbacks: OrchestratorCallbacks | null = null
+
+  getSecret(): string { return this.secret }
 
   async start(callbacks: OrchestratorCallbacks): Promise<number> {
     this.callbacks = callbacks
+    // Per-launch secret — MCP scripts must include this in requests
+    this.secret = require('crypto').randomUUID()
 
     return new Promise((resolve, reject) => {
       const { createServer: createHttpServer } = require('http')
       this.server = createHttpServer(async (req: any, res: any) => {
-        if (req.method !== 'POST' || req.url !== '/rpc') {
+        // Security: require secret in URL path
+        if (req.method !== 'POST' || req.url !== `/rpc/${this.secret}`) {
           res.writeHead(404)
           res.end()
           return

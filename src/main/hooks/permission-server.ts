@@ -85,6 +85,9 @@ function isSafeBashCommand(command: unknown): boolean {
   const trimmed = command.trim()
   if (!trimmed) return false
 
+  // Security: block subshells, process substitution, and backtick execution
+  if (/\$\(|`|<\(|>\(/.test(trimmed)) return false
+
   // Extract the first command (before any chaining operators)
   // Split on ;, &&, ||, | and check each segment
   const segments = trimmed.split(/\s*(?:;|&&|\|\||[|])\s*/)

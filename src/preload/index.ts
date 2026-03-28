@@ -117,6 +117,8 @@ const api: CanvasAPI = {
     return () => ipcRenderer.removeListener('orchestrator:send-message', handler)
   },
   orchestratorRespond: (channel: string, data: any) => {
+    // Security: only allow orchestrator response channels with expected prefix pattern
+    if (!/^orchestrator:(create-agent|close-agent|send-message)-response-\d+[a-z0-9]+$/.test(channel)) return
     ipcRenderer.send(channel, data)
   },
   pushAgentSnapshot: (snapshot: any, messages: any) => {

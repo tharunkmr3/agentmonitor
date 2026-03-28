@@ -95,13 +95,13 @@ async function installGithubSkill(
     const tarballUrl = `https://api.github.com/repos/${repo}/tarball/${commitSha}`
 
     // Use curl + tar — both always available on macOS
-    const cmd = [
-      `curl -sL "${tarballUrl}"`,
-      '|',
-      `tar -xz --strip-components=${pathDepth} -C "${tmpDir}" "*/${path}"`,
-    ].join(' ')
-
-    execSync(cmd, { timeout: 60000, stdio: 'pipe' })
+    // Security: use execFileSync with explicit args to avoid shell injection
+    const { execFileSync } = require('child_process')
+    const curlArgs = ['-sL', tarballUrl]
+    const tarArgs = ['-xz', `--strip-components=${pathDepth}`, '-C', tmpDir, `*/${path}`]
+    const curlData = execFileSync('curl', curlArgs, { timeout: 30000, maxBuffer: 50 * 1024 * 1024 })
+    const { execSync: _execSync } = require('child_process')
+    execFileSync('tar', tarArgs, { timeout: 30000, input: curlData, stdio: ['pipe', 'pipe', 'pipe'] })
 
     // Validate extracted files
     onStatus({ name: entry.name, state: 'validating' })

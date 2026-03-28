@@ -3,6 +3,7 @@ import { join } from 'path'
 import { existsSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs'
 import { createInterface } from 'readline'
 import { homedir, tmpdir } from 'os'
+import { randomUUID } from 'crypto'
 import { ControlPlane } from './claude/control-plane'
 import { CodexControlPlane } from './codex/codex-control-plane'
 import { OrchestratorBridge, createOrchestratorScript } from './claude/orchestrator-mcp'
@@ -29,14 +30,14 @@ async function setupOrchestrator(): Promise<void> {
       createAgent: async (title, prompt) => {
         // Ask the renderer to create a node and optionally auto-send a prompt
         return new Promise((resolve) => {
-          const responseChannel = `orchestrator:create-agent-response-${Date.now()}`
+          const responseChannel = `orchestrator:create-agent-response-${Date.now()}${Math.random().toString(36).slice(2, 10)}`
           ipcMain.once(responseChannel, (_event, result) => resolve(result))
           broadcast('orchestrator:create-agent', { title, prompt, responseChannel })
         })
       },
       closeAgent: async (nodeId) => {
         return new Promise((resolve) => {
-          const responseChannel = `orchestrator:close-agent-response-${Date.now()}`
+          const responseChannel = `orchestrator:close-agent-response-${Date.now()}${Math.random().toString(36).slice(2, 10)}`
           ipcMain.once(responseChannel, (_event, result) => resolve(result))
           broadcast('orchestrator:close-agent', { nodeId, responseChannel })
         })
@@ -48,7 +49,7 @@ async function setupOrchestrator(): Promise<void> {
       },
       sendMessage: async (nodeId, prompt) => {
         return new Promise((resolve) => {
-          const responseChannel = `orchestrator:send-message-response-${Date.now()}`
+          const responseChannel = `orchestrator:send-message-response-${Date.now()}${Math.random().toString(36).slice(2, 10)}`
           ipcMain.once(responseChannel, (_event, result) => resolve(result))
           broadcast('orchestrator:send-message', { nodeId, prompt, responseChannel })
         })
@@ -66,7 +67,7 @@ async function setupOrchestrator(): Promise<void> {
     mkdirSync(mcpDir, { recursive: true })
 
     const scriptPath = join(mcpDir, 'mcp-server.js')
-    writeFileSync(scriptPath, createOrchestratorScript(port))
+    writeFileSync(scriptPath, createOrchestratorScript(port, orchestratorBridge.getSecret()))
     chmodSync(scriptPath, 0o755)
 
     // Write MCP config JSON
@@ -225,6 +226,12 @@ function createWindow(): void {
 
 ipcMain.handle('canvas:get-background', async (_event, dirPath?: string) => {
   const targetDir = dirPath || process.cwd()
+
+  // Security: restrict to paths under the user's home directory
+  const resolved = require('path').resolve(targetDir)
+  const home = homedir()
+  if (!resolved.startsWith(home) || resolved.includes('\0') || resolved.includes('\n')) return null
+
   const imageExts = ['.png', '.jpg', '.jpeg', '.webp', '.bmp']
   const mimeMap: Record<string, string> = {
     '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -370,9 +377,22 @@ ipcMain.handle(IPC.PASTE_IMAGE, async () => {
 })
 
 ipcMain.handle(IPC.OPEN_EXTERNAL, async (_event, url: string) => {
-  if (typeof url !== 'string' || !url.startsWith('http')) return false
-  await shell.openExternal(url)
-  return true
+  if (typeof url !== 'string') return false
+  try {
+    const parsed = new URL(url)
+    // Security: only allow http/https, block localhost and private networks
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false
+    const host = parsed.hostname.toLowerCase()
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' ||
+        host.startsWith('10.') || host.startsWith('192.168.') ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(host) || host === '::1' || host === '[::1]') {
+      return false
+    }
+    await shell.openExternal(url)
+    return true
+  } catch {
+    return false
+  }
 })
 
 ipcMain.handle(IPC.TRANSCRIBE_AUDIO, async () => {
